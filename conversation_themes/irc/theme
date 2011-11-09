@@ -1,0 +1,30 @@
+# This is an example theme
+# Lines starting with a # are ignored
+
+# Theme infos section
+name=IRC layout
+description=This is an IRC style conversation layout  
+author=Julien "Trapamoosch" Enche
+website=http://trapamoosch.free.fr
+
+# Layout
+# Take care : space characters are not stripped between values and "=" and values must fit in one line
+# Tips : you can do things like "outgoing=incoming" if you want the same layout for incoming and outgoing messages, for example
+#
+# Here's the tags list :
+# %nick% : displays the nick of the message sender
+# %email% : displaus the email of the message sender
+# %message% : displays the raw message (ie ignoring the format the user applied to it)
+# %formattedmessage% : displays the formatted message
+# %h% : hour of the message
+# %m% : minute of the message
+# %s% : second of the message
+# and more to come...
+
+incoming=&lt;%nick%&gt; %formattedmessage%<br/>
+consecutive_incoming=incoming
+offline_incoming=incoming
+outgoing=incoming
+consecutive_outgoing=incoming
+information=<span style="font-weight: bold;">*** %message%</span><br/>
+error=<span style="font-weight: bold; color: #FF0000;">*** %message%</span><br/>

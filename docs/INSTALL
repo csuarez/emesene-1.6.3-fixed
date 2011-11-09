@@ -1,0 +1,10 @@
+to use just unpack it and do:
+
+cd emesene
+python Controller.py
+
+or on linux:
+
+./emesene 
+
+on windows double click the emesene.bat file

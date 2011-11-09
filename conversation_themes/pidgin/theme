@@ -1,0 +1,12 @@
+name=Pidgin layout
+description=This is an Pidgin style conversation layout
+author=Frederik "fretn" Delaere
+website=http://w.twwwo.be/
+
+incoming=<span style="color: #A82F2F">(%h%:%m%:%s%) <span style="font-weight: bold;">%nick% %says%: </span></span> %formattedmessage%<br/>
+consecutive_incoming=incoming
+offline_incoming=incoming
+outgoing=<span style="color: #16569E">(%h%:%m%:%s%) <span style="font-weight: bold;">%nick% %says%: </span></span> %formattedmessage%<br/>
+consecutive_outgoing=outgoing
+information=(%h%:%m%:%s%) <span style="font-weight: bold;">%message%</span><br/>
+error=<span style="color: #FF0000">(%h%:%m%:%s%) <span style="font-weight: bold;">%message%</span></span><br/>

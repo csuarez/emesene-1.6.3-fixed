@@ -1,0 +1,12 @@
+################################################################################
+# USERS:
+################################################################################
+Just execute the "emesene" script in this folder, no need to install or something else (./emesene in terminal)
+
+################################################################################
+# DEVELOPERS:
+################################################################################
+>>> create the translation template (emesene.pot):
+xgettext *.py plugins_base/*.py emesenelib/*.py abstract/*.py plugins_base/currentSong/*.py plugins_base/encryptMessage/*.py -o emesene.pot
+>>> tag a release
+svn copy https://emesene.svn.sourceforge.net/svnroot/emesene/trunk/emesene https://emesene.svn.sourceforge.net/svnroot/emesene/tags/emesene-1.X -m "Tagging emesene 1.X - codename"

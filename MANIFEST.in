@@ -1,0 +1,14 @@
+include COPYING
+include GPL
+include LGPL
+include PSF
+include emesene.pot
+include emesene-logo.png
+include *.htm
+include libmimic/*.h
+recursive-include conversation_themes *
+recursive-include smilies *
+recursive-include sound_themes *
+recursive-include themes *
+recursive-include misc *
+recursive-include po *

@@ -1,0 +1,1185 @@
+# -*- coding: utf-8 -*-
+
+'''Logger module, contains the Logger class and a test case'''
+
+#   This file is part of emesene.
+#
+#    Emesene is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+#
+#    Emesene is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with emesene; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301
+#    USA
+
+import os
+import gtk
+import sys
+import time
+import urllib
+import gobject
+import StringIO
+
+import dialog
+import emesenelib.common
+from htmltextview import HtmlTextView
+
+try:
+    from pysqlite2 import dbapi2 as sqlite
+except ImportError:
+    try:
+        import sqlite3.dbapi2 as sqlite
+        #Python 2.5 comes embedded with sqlite
+        print 'sqlite3 imported'
+    except ImportError:
+        sqlite = None
+
+import Plugin
+
+class Logger(object):
+    '''this class represent a event logger for conversations
+    its made for emesene but can be used on any other im application
+    or similar'''
+
+    CREATE_USER = '''
+    CREATE TABLE IF NOT EXISTS user
+    (
+        id INTEGER PRIMARY KEY,
+        account TEXT
+ )
+    '''
+
+    CREATE_CONVERSATION = '''
+    CREATE TABLE IF NOT EXISTS conversation
+    (
+        id INTEGER PRIMARY KEY,
+        started INTEGER
+ )
+    '''
+
+    CREATE_EVENT = '''
+    CREATE TABLE IF NOT EXISTS event
+    (
+        id INTEGER PRIMARY KEY,
+        stamp INTEGER,
+        name TEXT
+ )
+    '''
+
+    CREATE_USER_EVENT = '''
+    CREATE TABLE IF NOT EXISTS user_event
+    (
+        id_event INTEGER,
+        id_user INTEGER,
+        data TEXT
+ )
+    '''
+
+    CREATE_CONVERSATION_EVENT = '''
+    CREATE TABLE IF NOT EXISTS conversation_event
+    (
+        id_event INTEGER,
+        id_conversation INTEGER,
+        id_user INTEGER,
+        data TEXT
+ )
+    '''
+    CREATE_USER_EVENT_INDEX_EVENT = 'CREATE INDEX IF NOT EXISTS ueidevent ON \
+                                     user_event(id_event)'
+    CREATE_USER_EVENT_INDEX_USER = 'CREATE INDEX IF NOT EXISTS ueiduser ON \
+                                    user_event(id_user)'
+
+    USER_EXISTS = 'SELECT id FROM user WHERE account = ?'
+    USER_ADD = 'INSERT INTO user(id, account) VALUES(null, ?)'
+
+    USER_EVENT_ADD = '''INSERT INTO user_event(id_event, id_user, data)
+        VALUES(?, ?, ?)'''
+
+    EVENT_ADD = 'INSERT INTO event(id, stamp, name) VALUES(null, ?, ?)'
+
+    CONVERSATION_EVENT_ADD = '''INSERT INTO conversation_event(
+        id_event, id_conversation, id_user, data) VALUES(?, ?, ?, ?)'''
+
+    CONVERSATION_EXISTS = 'SELECT id FROM conversation WHERE started = ?'
+    CONVERSATION_ADD = 'INSERT INTO conversation(id, started) \
+                        VALUES(null, ?)'
+
+    def __init__(self, path):
+        '''constructor, try to open the database at path, if can not open
+        it, then try to create it'''
+
+        self.path = path
+
+        if sqlite is None:
+            return
+
+        self.connection = sqlite.connect(path)
+        self.cursor = self.connection.cursor()
+
+        try:
+            self._create()
+        except sqlite.OperationalError:
+            pass
+
+    def _create(self):
+        '''create the tables'''
+
+        self.cursor.execute(Logger.CREATE_USER)
+        self.cursor.execute(Logger.CREATE_CONVERSATION)
+        self.cursor.execute(Logger.CREATE_EVENT)
+        self.cursor.execute(Logger.CREATE_USER_EVENT)
+        self.cursor.execute(Logger.CREATE_USER_EVENT_INDEX_EVENT)
+        self.cursor.execute(Logger.CREATE_USER_EVENT_INDEX_USER)
+        self.cursor.execute(Logger.CREATE_CONVERSATION_EVENT)
+        self.connection.commit()
+
+    def user_exists(self, account):
+        '''return the user id if the account exists -1 otherwise'''
+
+        self.cursor.execute(Logger.USER_EXISTS, (unicode(account),))
+
+        result = self.cursor.fetchall()
+        if len(result) >= 1:
+            return result[0][0]
+        else:
+            return -1
+
+    def user_add(self, account):
+        '''try to add an user if account exists don't add it,
+        return the id in both cases'''
+
+        user_id = self.user_exists(account)
+
+        if user_id == -1:
+            self.cursor.execute(Logger.USER_ADD, (unicode(account),))
+            self.connection.commit()
+            return self.cursor.lastrowid
+
+        return user_id
+
+    def user_event_add(self, name, account, data, stamp=None):
+        '''add a user event with the event name "name", generated by
+        "account" and containing "data", return the id'''
+
+        user_id = self.user_add(account)
+        event_id = self.event_add(name, stamp)
+        self.cursor.execute(Logger.USER_EVENT_ADD, (event_id,
+                             user_id, data.decode("utf8")))
+        self.connection.commit()
+        return self.cursor.lastrowid
+
+    def event_add(self, name, stamp=None):
+        '''add an event with name "name", return the id'''
+        if stamp is None:
+            stamp = time.time()
+        self.cursor.execute(Logger.EVENT_ADD, (stamp, unicode(name)))
+        self.connection.commit()
+        return self.cursor.lastrowid
+
+    def conversation_event_add(self, name, started, account, data, stamp=None):
+        '''add a conversation event with name "name" started at the
+        "started" time, with data "data", return the id'''
+
+        conversation_id = self.conversation_add(started)
+        event_id = self.event_add(name, stamp)
+        user_id = self.user_add(account)
+        self.cursor.execute(Logger.CONVERSATION_EVENT_ADD, (event_id,
+                                conversation_id, user_id, data.decode("utf8")))
+        self.connection.commit()
+        return self.cursor.lastrowid
+
+    def conversation_exists(self, started):
+        '''return the id of the conversation if exists, -1 otherwise'''
+
+        self.cursor.execute(Logger.CONVERSATION_EXISTS, (started,))
+
+        result = self.cursor.fetchall()
+        if len(result) >= 1:
+            return result[0][0]
+        else:
+            return -1
+
+    def conversation_add(self, started):
+        '''try to add a conversation if exists don't add it,
+        return the id in both cases'''
+
+        conversation_id = self.conversation_exists(started)
+
+        if conversation_id == -1:
+            self.cursor.execute(Logger.CONVERSATION_ADD, (started,))
+            self.connection.commit()
+            return self.cursor.lastrowid
+
+        return conversation_id
+
+    def get_mails(self):
+        '''return a list of unique mails found on the logs'''
+        return [item[0] for item in \
+         self.query('select distinct account from user order by account')]
+
+    def get_events(self):
+        '''return a list of unique events found on the logs'''
+        return [item[0] for item in \
+            self.query('select distinct name from event order by name')]
+
+    def get_user_events(self):
+        '''return a list of unique user events found on the logs'''
+        return [item[0] for item in \
+            self.query('select distinct name from user_event, event where \
+            id_event = id order by name')]
+
+    def get_nick_stamp(self, contact, timestamp):
+        '''get the closest timestamp for a nick change, return None
+        if no stamp is available'''
+
+        result = self.query('select e.stamp \
+        from user u, event e, user_event ue \
+        where ue.id_user = u.id and \
+        ue.id_event = e.id and \
+        e.stamp < %s and \
+        u.account = "%s" and \
+        e.name = "nick-changed" \
+        order by e.stamp desc limit 1' % (timestamp, contact))
+
+        if len(result) == 0:
+            return None
+
+        return result[0][0]
+
+    def get_next_nick_stamp(self, contact, timestamp):
+        '''get the timestamp of the next nick change, method used for
+        optimization purposes, to not make a query every time we want
+        the nick we get the next stamp and compare it against the actual
+        one, when we get to that stamp, we get the new nickname,
+        return None if no result'''
+
+        result = self.query('select e.stamp \
+        from user u, event e, user_event ue \
+        where ue.id_user = u.id and \
+        ue.id_event = e.id and \
+        e.stamp >= %s and \
+        u.account = "%s" and \
+        e.name = "nick-changed" limit 1' % (timestamp, contact))
+
+        if len(result) == 0:
+            return None
+
+        return result[0][0]
+
+    def get_user_nick(self, contact, timestamp):
+        '''return the nick that the contact had on the given timestamp
+        if no nick found return contact mail'''
+        # first we select the closest nick-changed event to the timestamp
+
+        stamp = self.get_nick_stamp(contact, timestamp)
+
+        if stamp is None:
+            return contact
+
+        return self.query('select ue.data \
+        from event e, user_event ue \
+        where e.stamp = %f and \
+        ue.id_event = e.id' % (stamp,))[0][0]
+
+    def get_conversation_ids(self, account):
+        '''return the ids of the conversations where the contact was present'''
+        #in the inner query i select all convs ids where the contact is present
+        #in the outer query i select only convs where there is at 
+        #least one message! --cando
+
+        query = '''select co.id,co.started
+        from conversation co,conversation_event coe,event ev
+        where co.id = coe.id_conversation 
+        and coe.id_event = ev.id and ev.name = 'message'
+        and co.id in ( select distinct c.id
+        from conversation c, event e, conversation_event ce, user u
+        where c.id = ce.id_conversation and
+        e.id = ce.id_event and
+        ce.id_user = u.id and
+        u.account = "%s")
+        group by co.id
+        having count(*) >= 1
+        order by co.started
+        '''
+
+        return self.query(query % (account,))
+
+    def get_conversation(self, id_conversation, num=1):
+        '''return the last message that was said on a conversation where
+        account was present, the format of the list is a list of lists
+        with the timestamp, email and message'''
+
+        query = '''select e.stamp, u.account, ce.data
+        from event e, conversation_event ce, user u
+        where e.id = ce.id_event and
+        u.id = ce.id_user and
+        ce.id_conversation = %s and
+        e.name = "message"
+        limit %s'''
+
+        return self.query(query % (id_conversation, num))
+
+    def get_conversation_events(self):
+        '''return a list of unique conversation events found on the logs'''
+        return [item[0] for item in \
+            self.query('select distinct name from event, \
+            conversation_event where id_event = id order by name')]
+
+    def query(self, query, args=None):
+        '''make a custom query, return a tuple with all the results
+        the exception are not handled, because you need to know if a
+        query went bad on your plugin not this one, so please use
+        try except blocks'''
+
+        #print query
+
+        if args:
+            self.cursor.execute(query, args)
+        else:
+            self.cursor.execute(query)
+
+        return self.cursor.fetchall()
+
+class MainClass(Plugin.Plugin):
+    '''Main plugin class'''
+
+    description = _('Log all events and conversations in a database')
+    authors = {'Mariano Guerra' :
+        'luismarianoguerra at gmail dot com'}
+    website = 'http://emesene.org'
+    displayName =  'Logger'
+    name = 'Logger'
+    def __init__(self, controller, msn):
+        '''Contructor'''
+        Plugin.Plugin.__init__(self, controller, msn, 1000)
+
+        self.description = _('Log all events and conversations in a database')
+        self.authors = {'Mariano Guerra' :
+            'luismarianoguerra at gmail dot com'}
+        self.website = 'http://emesene.org'
+        self.displayName =  'Logger'
+        self.name = 'Logger'
+
+        self.controller = controller
+
+        self.config = controller.config
+        self.config.readPluginConfig(self.name)
+        self.path = self.config.getPluginValue(self.name,
+            'path', self.msn.cacheDir)
+
+        self.file_name = os.path.join(self.path, self.msn.user + '.db')
+        self.logger = Logger(self.file_name)
+        self.ids = []
+
+        self.signals = {}
+        self.signals['self-nick-changed'] = self._cb_self_nick_changed
+        self.signals['personal-message-changed'] = \
+            self._cb_personal_message_changed
+        self.signals['self-status-changed'] = self._cb_self_status_changed
+        self.signals['self-personal-message-changed'] = \
+            self._cb_self_personal_message_changed
+        self.signals['self-current-media-changed'] = \
+            self._cb_self_current_media_changed
+        self.signals['nick-changed'] = self._cb_nick_changed
+        self.signals['contact-status-change'] = \
+            self._cb_contact_status_change
+        self.signals['initial-status-change'] = \
+            self._cb_initial_status_change
+        self.signals['user-offline'] = self._cb_user_offline
+        self.signals['display-picture-changed'] = \
+            self._cb_display_picture_changed
+
+        self.signals['switchboard::message'] = self._cb_sb_message
+        self.signals['switchboard::ink-message'] = self._cb_sb_ink_message
+        self.signals['switchboard::nudge'] = self._cb_sb_nudge
+        self.signals['switchboard::message-sent'] = self._cb_sb_message_sent
+        self.signals['switchboard::ink-sent'] = self._cb_sb_ink_message_sent
+        self.signals['switchboard::nudge-sent'] = self._cb_sb_nudge_sent
+        self.signals['switchboard::action-message'] = \
+            self._cb_sb_action_message
+        self.signals['switchboard::action-sent'] = \
+            self._cb_sb_action_message_sent
+        self.signals['switchboard::custom-emoticon-received'] = \
+            self._cb_sb_custom_emoticon_received
+        self.signals['switchboard::user-join'] = self._cb_sb_user_join
+
+        self.signals_labels = {}
+        self.signals_labels['self-nick-changed'] = _('Self nick changed')
+        self.signals_labels['personal-message-changed'] = _('PM changed')
+        self.signals_labels['self-status-changed'] = _('Self status changed')
+        self.signals_labels['self-personal-message-changed'] = _('Self PM changed')
+        self.signals_labels['self-current-media-changed'] = _('Self current media changed')
+        self.signals_labels['nick-changed'] = _('Nick changed')
+        self.signals_labels['contact-status-change'] = _('Contact status changed')
+        self.signals_labels['initial-status-change'] = _('Initial status changed')
+        self.signals_labels['user-offline'] = _('User offline')
+        self.signals_labels['display-picture-changed'] = _('Display picture changed')
+        self.signals_labels['switchboard::message'] = _('Message received')
+        self.signals_labels['switchboard::ink-message'] = _('Ink message received')
+        self.signals_labels['switchboard::nudge'] = _('Nudge received')
+        self.signals_labels['switchboard::message-sent'] = _('Message sent')
+        self.signals_labels['switchboard::ink-sent'] = _('Ink message sent')
+        self.signals_labels['switchboard::nudge-sent'] = _('Nudge sent')
+        self.signals_labels['switchboard::action-message'] = _('Action message received')
+        self.signals_labels['switchboard::action-sent'] = _('Action message sent')
+        self.signals_labels['switchboard::custom-emoticon-received'] = _('Custom emoticon received')
+        self.signals_labels['switchboard::user-join'] = _('User joined conversation')
+        # functions to be called on mainloop idleness
+        self.queued = []
+        self.queuedtag = 0
+
+        # timeout source to disconect it
+        self.to_source = None
+        all_events = ','.join(self.signals.keys())
+
+        self.menuItemId = 0
+
+    def start(self):
+        '''start the plugin'''
+        if sqlite is None:
+            return
+        self.enabled = True
+
+        self.events_enabled = []
+        for signal in self.signals.keys():
+            if bool(int(self.config.getPluginValue( self.name, signal, True ))):
+                self.events_enabled.append(signal)
+
+        for (key, value) in self.signals.iteritems():
+            if key in self.events_enabled:
+                self.ids.append(self.msn.connect(key, self.callback, value))
+
+
+        self.menuItemId = self.controller.connect("usermenu-item-add", self.add_usermenu_item)
+
+    def stop(self):
+        '''stop the plugin'''
+
+        # disconnect msn signals
+        for identifier in self.ids:
+            self.msn.disconnect(identifier)
+        self.ids = []
+
+        self.controller.disconnect(self.menuItemId)
+
+        self.enabled = False
+
+    def callback(self, *args):  # sorry, pylint, i know you don't like this
+        '''Adds the function in the last argument to the queue, to be called
+        later when the mainloop is idle. sqlite isn't exactly fast'''
+
+        params, func = args[:-1], args[-1]
+
+        # add the stamp parameter
+        params += (time.time(), )
+
+        self.queued.append((func, params))
+
+        # if the process_queue loop is dead, start it
+        if self.queuedtag == 0:
+            self.queuedtag = gobject.idle_add(self.process_queue)
+
+    def process_queue(self):
+        '''Takes the signal queue and calls one function.
+        It's called on a idle_add loop. If there are no function, it
+        quits the loop returning false and removing the queuedtag'''
+
+        if self.queued:
+            func, params = self.queued.pop(0)
+            func(*params)
+            return True
+        else:
+            self.queuedtag = 0
+            return False
+
+    def check(self):
+        '''check if everything is OK to start the plugin
+        return a tuple whith a boolean and a message
+        if OK -> (True , 'some message')
+        else -> (False , 'error message')'''
+
+        if sqlite is None:
+            return (False, 'sqlite not available, please install it.')
+        else:
+            return (True, 'Ok')
+
+    def get_last_status(self, account, num = 1):
+        '''return the last status of a contact, if num is > 1
+        then return the last num status, the format of the list is
+        a list of lists with the timestamp and the status'''
+
+        query = '''
+        select e.stamp, ue.data
+        from user u, event e, user_event ue
+        where e.id = ue.id_event and
+        u.id = ue.id_user and
+        e.name = "status-changed" and
+        u.account = "%s"
+        order by e.stamp desc
+        limit %s
+        '''
+
+        return self.logger.query(query % (account, num))
+
+    def get_last_nick(self, account, num = 1):
+        '''return the last nick of a contact, if num is > 1
+        then return the last num nicks, the format of the list is
+        a list of lists with the timestamp and the nick'''
+
+        query = '''
+        select e.stamp, ue.data
+        from user u, event e, user_event ue
+        where e.id = ue.id_event and
+        u.id = ue.id_user and
+        e.name = "nick-changed" and
+        u.account = "%s"
+        order by e.stamp desc
+        limit %s
+        '''
+
+        return self.logger.query(query % (account, num))
+
+    def get_last_personal_message(self, account, num = 1):
+        '''return the last pm of a contact, if num is > 1
+        then return the last num pms, the format of the list is
+        a list of lists with the timestamp and the pm'''
+
+        query = '''
+        select e.stamp, ue.data
+        from user u, event e, user_event ue
+        where e.id = ue.id_event and
+        u.id = ue.id_user and
+        e.name = "personal-message-changed" and
+        u.account = "%s"
+        order by e.stamp desc
+        limit %s
+        '''
+
+        return self.logger.query(query % (account, num))
+
+    def get_just_last_personal_message(self, account):
+        '''return the last personal message as a string or
+        None rather than a list'''
+
+        result = self.get_last_personal_message(account)
+
+        if result:
+            return result[0][1]
+
+        return None
+
+    def get_just_last_nick(self, account):
+        '''return the last nick as a string or
+        None rather than a list'''
+
+        result = self.get_last_nick(account)
+
+        if result:
+            return result[0][1]
+
+        return None
+
+    def get_just_last_status(self, account):
+        '''return the last status as a string or
+        None rather than a list'''
+
+        result = self.get_last_status(account)
+
+        if result:
+            return result[0][1]
+
+        return None
+
+    def get_last_message(self, account, num = 1):
+        '''return the last message of a contact, if num is > 1
+        then return the last num messages, the format of the list is
+        a list of lists with the timestamp and the message'''
+
+        query = '''
+        select e.stamp, ce.data
+        from user u, event e, conversation_event ce
+        where e.id = ce.id_event and
+        u.id = ce.id_user and
+        e.name = "message" and
+        u.account = "%s"
+        order by e.stamp desc
+        limit %s
+        '''
+
+        return self.logger.query(query % (account, num))
+
+    def get_last_display_picture(self, account, num = 1):
+        '''return the last dp of a contact, if num is > 1
+        then return the last num dps, the format of the list is
+        a list of lists with the timestamp and the dp'''
+
+        query = '''
+        select e.stamp, ue.data
+        from user u, event e, user_event ue
+        where e.id = ue.id_event and
+        u.id = ue.id_user and
+        e.name = "display-picture" and
+        u.account = "%s"
+        order by e.stamp desc
+        limit %s
+        '''
+
+        return self.logger.query(query % (account, num))
+
+    def get_last_custom_emoticon(self, account, num = 1):
+        '''return the last ce of a contact, if num is > 1
+        then return the last num ces, the format of the list is
+        a list of lists with the timestamp and the ce'''
+
+        query = '''
+        select e.stamp, ce.data
+        from user u, event e, conversation_event ce
+        where e.id = ce.id_event and
+        u.id = ce.id_user and
+        e.name = "custom-emoticon" and
+        u.account = "%s"
+        order by e.stamp desc
+        limit %s
+        '''
+
+        return self.logger.query(query % (account, num))
+
+    def get_last_conversation(self, account, num = 1):
+        '''return the last message that was said on a conversation where
+        account was present, the format of the list is a list od lists
+        with the timestamp, email and message'''
+
+        # in the inner select we select all the id of conversations
+        # where account was present, then on the outer conversation
+        # we select all the messages from that conversations
+        query = '''
+        select e.stamp, u.account, ce.data
+        from event e, conversation_event ce, user u
+        where e.id = ce.id_event and
+        u.id = ce.id_user and
+        ce.id_conversation in
+        (select distinct c.id
+        from conversation c, event e, conversation_event ce, user u
+        where c.id = ce.id_conversation and
+        e.id = ce.id_event and
+        ce.id_user = u.id and
+        u.account = "%s") and
+        e.name = "message"
+        order by e.stamp desc
+        limit %s
+        '''
+
+        return self.logger.query(query % (account, num))
+
+    def add_usermenu_item(self, controller, userMenu):
+        self.logMenuItem = userMenu.newImageMenuItem( _( "Conversation _log" ),
+            gtk.STOCK_FILE )
+        userMenu.viewMenu.add( self.logMenuItem )
+        self.logMenuItem.show()
+        self.logMenuItem.connect( 'activate', self.on_menuitem_activate, userMenu.user.email )
+
+    def on_menuitem_activate(self, widget, email):
+        self.window = gtk.Window()
+        self.window.set_border_width(5)
+        self.window.set_title(_("Conversation log for %s") % email)
+        self.window.set_default_size(650,350)
+        self.window.set_position(gtk.WIN_POS_CENTER)
+
+        textview = gtk.TextView()
+        self.textBuffer = textview.get_buffer()
+        self.textBuffer.create_tag('highlight', background = 'yellow')
+
+        scroll = gtk.ScrolledWindow()
+        scroll.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
+
+        self.textview = HtmlTextView(self.controller, self.textBuffer, scroll)
+        self.textview.set_wrap_mode(gtk.WRAP_WORD_CHAR)
+        self.textview.set_left_margin(6)
+        self.textview.set_right_margin(6)
+        self.textview.set_editable(False)
+        self.textview.set_cursor_visible(False)
+
+        scroll.add(self.textview)
+
+        hbox = gtk.HBox(False, 5)
+        saveButton = gtk.Button(stock=gtk.STOCK_SAVE)
+        saveButton.connect("clicked", self.on_save_logs)
+
+        refreshButton = gtk.Button(stock=gtk.STOCK_REFRESH)
+        refreshButton.connect("clicked", self.on_refresh_log, email)
+
+        closeButton = gtk.Button(stock=gtk.STOCK_CLOSE)
+        closeButton.connect("clicked", lambda w: self.window.hide())
+        
+        ############ Search TreeView ###################
+        self.search_active = False
+        
+        self.searchStore = gtk.ListStore(str, str, str, str)
+        self.searchTree = gtk.TreeView(self.searchStore)
+        self.searchTree.connect("row-activated", self.set_cursor)
+        self.searchTree.set_rules_hint(True)
+        cell = gtk.CellRendererText()
+        
+        nameCol = gtk.TreeViewColumn(_("Date"), cell, text=0)
+        dateCol = gtk.TreeViewColumn(_("Time"), cell, text=1)
+        timeCol = gtk.TreeViewColumn(_("Name"), cell, text=2)
+        msgCol = gtk.TreeViewColumn(_("Message"), cell, text=3)
+        
+        nameCol.set_resizable(True)
+        dateCol.set_resizable(True)
+        timeCol.set_resizable(True)        
+        msgCol.set_resizable(True)
+        
+        self.searchTree.append_column(nameCol)
+        self.searchTree.append_column(dateCol)
+        self.searchTree.append_column(timeCol)
+        self.searchTree.append_column(msgCol)
+        
+        self.searchSw = gtk.ScrolledWindow()
+        self.searchSw.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
+        self.searchSw.add(self.searchTree)
+        self.searchSw.set_size_request(100, 30)
+        
+        ##################################################
+        
+        #search box
+        searchLabel = gtk.Label(_("Search:"))
+        self.searchBox = gtk.Entry()
+        self.searchBox.connect("key-press-event", self.enter_pressed)
+        
+
+        hbox.pack_end(saveButton, False, False)
+        hbox.pack_end(refreshButton, False, False)
+        hbox.pack_end(closeButton, False, False)
+        hbox.pack_end(self.searchBox, False, False)
+        hbox.pack_end(searchLabel, False, False)
+
+        textRenderer = gtk.CellRendererText()
+        column = gtk.TreeViewColumn(_("Date"), textRenderer, markup=0)
+        self.datesListstore = gtk.ListStore(str)
+
+        self.datesTree = gtk.TreeView(self.datesListstore)
+        self.datesTree.connect("cursor-changed", self.on_dates_cursor_change)
+        self.datesTree.append_column(column)
+        self.datesTree.set_headers_visible(False)
+
+        datesScroll = gtk.ScrolledWindow()
+        datesScroll.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
+        datesScroll.add_with_viewport(self.datesTree)
+        datesScroll.set_size_request(150, -1)
+
+
+        hPaned = gtk.HPaned()
+        hPaned.pack1(datesScroll)
+        hPaned.pack2(scroll)
+
+        vbox = gtk.VBox(spacing=5)
+        vbox.pack_start(hPaned)
+        vbox.pack_start(hbox, False, False)
+        vbox.pack_start(self.searchSw)
+        vbox.pack_start(gtk.Statusbar(), False, False)
+
+        self.datesStamps = {}
+        logsCant = len(self.fill_dates_tree(email))
+        if not logsCant > 0:
+            dialog.information(_("No logs were found for %s") % (email))
+        else:
+            self.window.add(vbox)
+            self.window.show_all()
+        
+        self.searchSw.hide_all()   
+            
+    def set_cursor(self, treeview, path, col):
+        (model, iter) = self.searchTree.get_selection().get_selected()
+        dateSearch = self.searchStore.get_value(iter, 0)
+        timeSearch = self.searchStore.get_value(iter, 1)
+        
+        #Search in the datesTree
+        self.datesTree.set_cursor_on_cell(0)
+        (model, iter) = self.datesTree.get_selection().get_selected()
+        while iter:
+            date = self.datesListstore.get_value(iter, 0)
+            
+            if date == dateSearch:
+                self.datesTree.set_cursor_on_cell(model.get_path(iter))
+                break
+            
+            iter = model.iter_next(iter)
+            
+        self.scroll_to_result(timeSearch)
+            
+    def scroll_to_result(self, timee):
+        start_iter = self.textBuffer.get_start_iter()
+        result = start_iter.forward_search(timee, gtk.TEXT_SEARCH_VISIBLE_ONLY,
+                None)
+                
+        if result is not None:
+            match_start_iter, match_end_iter = result
+            match_start_iter.backward_char() #include '(' or other character before time
+            match_end_iter.forward_line() #highlight all message not just time
+            
+            self.textBuffer.apply_tag_by_name('highlight', match_start_iter,
+                    match_end_iter)
+                    
+            match_start_mark = self.textBuffer.create_mark('match_start',
+                    match_start_iter, True)
+                    
+            self.textview.scroll_to_mark(match_start_mark, 0, True)
+
+    def enter_pressed(self, button, event):
+        if len(self.searchBox.get_text()) == 0:
+            self.searchSw.hide_all()
+        elif event.keyval == 65293 or event.keyval == 65421: #If enter key is pressed
+            self.searchStore.clear()
+            text = self.searchBox.get_text()
+            self.searchSw.show_all()
+            self.datesTree.set_cursor_on_cell(0)
+            (model, iter) = self.datesTree.get_selection().get_selected()
+            self.search_active = True
+            while iter:
+                self.searchIter = iter
+                self.searchText = text
+                self.datesTree.set_cursor_on_cell(model.get_path(iter))
+                iter = model.iter_next(iter)
+                
+            self.search_active = False
+                
+            self.textview.get_buffer().set_text("")
+
+    def fill_dates_tree(self, mail):
+        '''fill the treeview with the logs dates'''
+        dates = []
+        for (id_conversation, stamp) in self.logger.get_conversation_ids(mail):
+            ctime = str(time.ctime(float(stamp)))
+            date = ctime.split()
+            date = " ".join(date[0:3]) + " " + date[4]
+
+            if date in self.datesStamps.keys():
+                self.datesStamps[date].append(id_conversation)
+            else:
+                self.datesStamps[date] = [id_conversation]
+                dates.append(date)
+
+        dates.reverse()
+        for date in dates:
+            self.datesListstore.append([date])
+
+        return self.datesStamps
+
+            #self.datesListstore.append([ctime])
+            #self.datesStamps[ctime] =  id_conversation
+
+        return self.datesStamps
+
+    def on_dates_cursor_change(self, *args):
+        try:
+            selected = self.datesListstore.get(
+                self.datesTree.get_selection().get_selected()[1], 0)[0]
+        except (TypeError, AttributeError):
+            return
+        
+        string1 = (_('Conversation opened'))
+        string2 = (_('Conversation closed'))
+        ids_conversation = self.datesStamps[selected]
+        nick_cache = {}
+        self.textview.get_buffer().set_text("")
+        for id_conversation in ids_conversation:         
+            listMessages = self.logger.get_conversation(id_conversation, 10000)
+            if (len(listMessages)!= 0):
+                self.textview.display_html('<body><span style=\"font-weight: bold;\"><b>*** '+string1+' ***</b>'
+                                            '</span></body>')
+                for (stamp, mail, message) in listMessages:
+
+                    if mail in nick_cache:
+                        if nick_cache[mail]['next'] is not None and \
+                            nick_cache[mail]['next'] <= stamp:
+                            nick = self.logger.get_user_nick(mail, stamp)
+                            next = self.logger.get_next_nick_stamp(mail, stamp)
+                            nick_cache[mail] = {'nick': nick, 'next' : next}
+                        else:
+                            nick = nick_cache[mail]['nick']
+                    else:
+                        nick = self.logger.get_user_nick(mail, stamp)
+                        next = self.logger.get_next_nick_stamp(mail, stamp)
+                        nick_cache[mail] = {'nick': nick, 'next' : next}
+
+                    date = time.ctime(float(stamp)).split()[3]
+                    (_format, encoding, text) = message.split('\r\n', 2)
+                    style = parse_format(_format)
+                    nick = self.controller.unifiedParser.getParser(nick).get()
+                    text = self.controller.unifiedParser.getParser(text).get()
+                    text = text.replace("\r\n", "\n").replace("\n", "<br />")
+                    
+                    if self.search_active:    
+                        date2 = self.datesListstore.get_value(self.searchIter, 0)
+                        if text.find(self.searchText) != -1:
+                            self.searchStore.append([date2, date, nick, text])
+
+                    try:
+                        self.textview.display_html('<body>(%s) <b>%s: </b>'
+                            '<span style="%s">%s</span></body>' % (date, nick, style, text))
+                    except:
+                        # hide messages that we can't display
+                        pass
+                self.textview.display_html('<body><span style=\"font-weight: bold;\"><b>*** '+string2+' ***</b>'
+                                            '</span></body>')
+                self.textview.display_html('<br/>')
+
+            else:
+                pass
+
+
+    def on_save_logs(self, button):
+
+        title = (_("Save conversation log"))
+
+        dialog = gtk.FileChooserDialog(title, None, \
+                                gtk.FILE_CHOOSER_ACTION_SAVE, \
+                                (gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL, \
+                                gtk.STOCK_SAVE, gtk.RESPONSE_OK))
+
+        dialog.set_default_response(gtk.RESPONSE_OK)
+        dialog.show_all()
+
+        response = dialog.run()
+
+        while True:
+            if response != gtk.RESPONSE_OK:
+                break
+
+            if dialog.get_filename():
+                path = dialog.get_filename()
+                f = open(path, "w")
+                f.write(self.textBuffer.get_text(self.textBuffer.get_start_iter(),\
+                      self.textBuffer.get_end_iter() ))
+                f.close()
+
+                break
+
+
+        dialog.hide()
+
+    def on_refresh_log(self, button, email):
+        self.on_dates_cursor_change()
+
+    def _cb_self_nick_changed(self, msn, old, new, stamp=None):
+        '''called when we change our own nick'''
+        if new != self.get_last_nick(self.msn.user):
+            self.logger.user_event_add('nick-changed', self.msn.user,
+                                        new, stamp)
+
+    def _cb_personal_message_changed(self, msn, email, personal_message,
+                                     stamp=None):
+        '''called when an user changes the personal message'''
+
+        if personal_message != '' and \
+            self.get_just_last_personal_message(email) != personal_message:
+            self.logger.user_event_add('personal-message-changed', email,
+                                        personal_message, stamp)
+
+    def _cb_self_status_changed(self, msn, status, stamp=None):
+        '''called when we change the status'''
+        if self.get_last_status(msn.user) != status:
+            self.logger.user_event_add('status-changed',
+                self.msn.user, status, stamp)
+
+    def _cb_self_personal_message_changed(self, msn, ourmail,
+                                          personal_message, stamp=None):
+        '''called when we change our personal message'''
+        if personal_message != '' and \
+            self.get_just_last_personal_message(ourmail) != personal_message:
+            self.logger.user_event_add('personal-message-changed', ourmail,
+                                        personal_message, stamp)
+
+    def _cb_self_current_media_changed(self, msn, ourmail, personal_message,
+                                       dict_, stamp=None):
+        '''called when we change our current media'''
+        if personal_message != '' and \
+            self.get_just_last_personal_message(ourmail) != personal_message:
+            self.logger.user_event_add('personal-message-changed', ourmail,
+                                        personal_message, stamp)
+
+    def _cb_nick_changed(self, msn, email, nick, stamp=None):
+        '''called when someone change his nick'''
+        if nick != self.get_last_nick(email):
+            self.logger.user_event_add('nick-changed', email, nick, stamp)
+
+    def _cb_contact_status_change(self, msn, email, status, stamp=None):
+        '''called when someone change his status'''
+        if self.get_last_status(email) != status:
+            self.logger.user_event_add('status-changed', email, status, stamp)
+
+    def _cb_initial_status_change(self, msn, command, tid, params, stamp=None):
+        '''called when someone change his status when we come online'''
+        data = params.split(' ')
+        status = data[0]
+        email = data[1].lower()
+
+        if self.get_last_status(email) != status:
+            self.logger.user_event_add('status-changed', email, status, stamp)
+
+    def _cb_user_offline(self, msn, email, stamp=None):
+        '''called when someone goes offline'''
+        self.logger.user_event_add('status-changed', email, 'FLN', stamp)
+
+    def _cb_sb_user_join(self, msn, switchboard, signal, args, stamp=None):
+        '''called when an user join to the conversation'''
+        mail = args[0]
+        self.logger.conversation_event_add('user-join',
+            switchboard.started, mail, '', stamp)
+
+    def _cb_sb_user_leave(self, msn, switchboard, signal, args, stamp=None):
+        '''called when an user leaves the conversation'''
+        mail = args[0]
+        self.logger.conversation_event_add('user-leave',
+            switchboard.started, mail, '', stamp)
+
+    def _cb_sb_message(self, msn, switchboard, signal, args, stamp=None):
+        '''called when we receive a message'''
+        mail, nick, body, format, charset, p4c = args
+        message = '%s\r\n%s\r\n%s' % (format, charset,
+            body.replace('\\', '\\\\'))
+        self.logger.conversation_event_add('message',
+            switchboard.started, mail, message, stamp)
+
+    def _cb_sb_action_message(self, msn, switchboard, signal, args, stamp=None):
+        '''called when an action message is received'''
+        mail, data = args
+        self.logger.conversation_event_add('action-message',
+            switchboard.started, mail, data, stamp)
+
+    def _cb_sb_ink_message(self, msn, switchboard, signal, args, stamp=None):
+        '''called when an ink message is received'''
+        signal, filename = args
+        self.logger.conversation_event_add('ink-message',
+            switchboard.started, mail, filename, stamp)
+
+    def _cb_sb_nudge(self, msn, switchboard, signal, args, stamp=None):
+        '''called when a nudge is received'''
+        mail = args[0]
+        self.logger.conversation_event_add('nudge', switchboard.started,
+            mail, '', stamp)
+
+    def _cb_sb_message_sent(self, msn, switchboard, signal, args, stamp=None):
+        '''called when we send a message'''
+        body, format, charset = args
+        try:
+            format = format.split('X-MMS-IM-Format: ')[1]
+        except IndexError:
+            format = ''
+        message = '%s\r\n%s\r\n%s' % (format, charset, body)
+        self.logger.conversation_event_add('message',
+            switchboard.started, self.msn.user, message, stamp)
+
+    def _cb_sb_action_message_sent(self, msn, switchboard, signal,
+                                   args, stamp=None):
+        '''called when an action message is received'''
+        data = args[0]
+        self.logger.conversation_event_add('action-message',
+            switchboard.started, self.msn.user, data, stamp)
+
+    def _cb_sb_ink_message_sent(self, msn, switchboard, signal,
+                                args, stamp=None):
+        '''called when an ink message is sent'''
+        self.logger.conversation_event_add('ink-message',
+            switchboard.started, self.msn.user, '', stamp)
+
+    def _cb_sb_nudge_sent(self, msn, switchboard, signal, args, stamp=None):
+        '''called when a nudge is sent'''
+        self.logger.conversation_event_add('nudge',
+            switchboard.started, self.msn.user, '', stamp)
+
+    def _cb_sb_custom_emoticon_received(self, msn, switchboard, signal,
+                                        args, stamp=None):
+        '''called when a custom emoticon is received (du'h)'''
+        shortcut, msnobj = args
+        filename = shortcut + '_' + msnobj.sha1d + '.tmp'
+        filename = urllib.quote(filename).replace('/', '_')
+        complete_filename = self.msn.cacheDir + os.sep + filename
+        self.logger.conversation_event_add('custom-emoticon',
+            switchboard.started, self.msn.user,
+            shortcut + ' ' + complete_filename, stamp)
+
+    def _cb_display_picture_changed(self, msn, switchboard, msnobj, mail,
+                                    stamp=None):
+        '''called when a new display picture is received'''
+        contact = self.msn.contactManager.getContact(mail)
+        if contact is None:
+            return
+        filename = contact.displayPicturePath
+
+        result = self.get_last_display_picture(mail)
+
+        if result:
+            old_filename = result[0][1]
+        else:
+            old_filename = None
+
+        if old_filename != filename:
+            self.logger.user_event_add('display-picture', mail, \
+                                       filename, stamp)
+
+
+    def configure( self ):
+        configuration = []
+        configuration.append(Plugin.Option('', gtk.Widget, '', '', gtk.Label(_("Enable/disable events to be logged:"))))
+        for signal in self.signals:
+            configuration.append(Plugin.Option(signal, bool, self.signals_labels[signal], \
+            '', bool(int(self.config.getPluginValue(self.name, signal, True)))))
+
+        configWindow = Plugin.ConfigWindow( 'Logger', configuration )
+        configWindow.vbox.set_spacing(0)
+        response = configWindow.run()
+        if response != None:
+            for signal in self.signals:
+                if response.has_key(signal):
+                    self.config.setPluginValue( self.name, signal, str(int(response[signal].value)) )
+            self.stop()
+            self.start()
+            return True
+
+
+def parse_format(format):
+    '''parse the format and return the style'''
+
+    # FN=Sans; EF=; CO=000000; PF=0
+
+    style = ''
+
+    if format.find("FN=") != -1:
+        font = format.split('FN=')[1].split(';')[0].replace('%20', ' ')
+        style += 'font-family: ' + emesenelib.common.escape(font) + ';'
+
+    if format.find("CO=") != -1:
+        color = format.split('CO=')[1].split(';')[0]
+
+        if len(color) == 3:
+            color = color[2] + color[1] + color[0]
+            style += 'color: #' + emesenelib.common.escape(color) + ';'
+        else:
+            color = color.zfill(6)
+
+        if len(color) == 6:
+            color = color[4:6] + color[2:4] + color[:2]
+            style += 'color: #' + emesenelib.common.escape(color) + ';'
+
+    if format.find("EF=") != -1:
+        effect = set(format.split('EF=')[1].split(';')[0])
+
+        if "B" in effect:
+            style += 'font-weight: bold;'
+        if "I" in effect:
+            style += 'font-style: italic;'
+        if "U" in effect:
+            style += 'text-decoration: underline;'
+        if "S" in effect:
+            style += 'text-decoration: line-through;'
+
+    return style

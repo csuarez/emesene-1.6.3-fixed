@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Emesene
+GenericName=Emesene
+Comment=MSN Messenger client
+Exec=emesene
+Icon=emesene
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;

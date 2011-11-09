@@ -1,0 +1,9 @@
+if you want to translate emesene to your language do the following:
+
+* open a terminal 
+* cd to emesene
+* run xgettext *.py
+* open messages.po
+* complete the empty strings below the english strings with the translations
+* send me the file specifying the language and the abreviation ( i.e: en for english, es for spanish )
+* the translations will be in the next release and your name will be added to the translators window in about emesene

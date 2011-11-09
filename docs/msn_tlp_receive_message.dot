@@ -1,0 +1,51 @@
+digraph msn_tlp_receive_message {
+    node [style=dashed, fontsize=9];
+    edge [style=dashed, fontsize=9];
+    switchboard; "Other bridges";
+
+    node [style=bold, fontsize=12];
+    edge [style=solid];
+
+    "msn_tlp.receive_message";
+
+    node [style=solid];
+
+    edge [arrowhead=empty];
+    "Other bridges" -> "msn_tlp.receive_message";
+    switchboard -> "msn_tlp.receive_message";
+    edge [arrowhead=normal];
+    
+    "msn_tlp.receive_message" -> "is ACK?";
+    "is ACK?" -> "ignore it, return" [label="yes"];
+    "is ACK?" -> "is partial message?" [label="no"];
+    "is partial message?" -> "emit progress if EACH_FLAG" [label="yes"];
+    "is partial message?" -> "ack the chunk" [label="no"];
+    "emit progress if EACH_FLAG" -> "is follow-up?";
+
+    "is follow-up?" -> "write chunk to file object" [label="follow up"];
+    "write chunk to file object" -> "is the file ready?";
+    "is the file ready?" -> "stop processing, return" [label="no"];
+    "is the file ready?" -> "build long string if !STORAGE_FLAG" [label="yes"];
+    "build long string if !STORAGE_FLAG" -> "ack the chunk";
+
+    "is follow-up?" -> "create a file object" [label="first message"];
+    "create a file object" -> "save in incoming_pending_messages";
+    "save in incoming_pending_messages" -> "stop processing, return";
+    
+    "ack the chunk" -> "ensure there is a file object if STORAGE_FLAG"
+    "ensure there is a file object if STORAGE_FLAG" ->
+        "session_id == 0 and flag == 0?";
+    
+    "session_id == 0 and flag == 0?" ->
+        "create a SLPMessage" [label="yes"]
+    "session_id == 0 and flag == 0?" ->
+        "create an empty SLPMessage" [label="no"];
+
+    "create a SLPMessage" -> "signal for message type?";
+    "create an empty SLPMessage" -> "signal for message type?";
+
+    "signal for message type?" -> "msnp2p-file-received" [label="file"];
+    "signal for message type?" -> "invite-message-received" [label="invite"];
+    "signal for message type?" -> "msnp2p-message-received" [label="else"];
+
+}
