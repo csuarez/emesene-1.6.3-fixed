@@ -22,59 +22,59 @@ def membership(proxy, callback):
     common.debug("soap.requests: membership list", "soap")
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/FindMembership',
-        'local-bay.contacts.msn.com', 443, '/abservice/SharingService.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/SharingService.asmx',
         soap.templates.membershipList, callback)
 
 def address_book(proxy, callback):
     common.debug("soap.requests: address book", "soap")
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/ABFindAll',
-        'local-bay.contacts.msn.com', 443, '/abservice/abservice.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/abservice.asmx',
         soap.templates.addressBook, callback)
 
 def change_alias(proxy, contactID, alias, callback, *args):
     alias = str(common.escape(alias))
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/ABContactUpdate',
-        'local-bay.contacts.msn.com', 443, '/abservice/abservice.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/abservice.asmx',
         soap.templates.renameContact % (str(contactID), alias),
         callback, args)
 
 def add_contact(proxy, email, callback, *args):
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/ABContactAdd',
-        'local-bay.contacts.msn.com', 443, '/abservice/abservice.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/abservice.asmx',
         soap.templates.contactAdd % (email, ), callback, args)
 
 def remove_contact(proxy, contactID, callback, *args):
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/ABContactDelete',
-        'local-bay.contacts.msn.com', 443, '/abservice/abservice.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/abservice.asmx',
         soap.templates.contactRemove % (contactID, ), callback, args)
 
 def add_to_group(proxy, gid, contactID, callback, *args):
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/ABGroupContactAdd',
-        'local-bay.contacts.msn.com', 443, '/abservice/abservice.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/abservice.asmx',
         soap.templates.moveUserToGroup % (gid, contactID), callback, args)
 
 def remove_from_group(proxy, contactID, sourceGid, callback, *args):
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/ABGroupContactDelete',
-        'local-bay.contacts.msn.com', 443, '/abservice/abservice.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/abservice.asmx',
         soap.templates.deleteUserFromGroup % (contactID, sourceGid),
         callback, args)
 
 def add_role(proxy, role, email, callback, *args):
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/AddMember',
-        'local-bay.contacts.msn.com', 443, '/abservice/SharingService.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/SharingService.asmx',
         soap.templates.addMember % (role, email), callback, args)
 
 def delete_role(proxy, role, email, callback, *args):
     soap.manager.do_request(proxy,
         'http://www.msn.com/webservices/AddressBook/DeleteMember',
-        'local-bay.contacts.msn.com', 443, '/abservice/SharingService.asmx',
+        'local-sn.contacts.msn.com', 443, '/abservice/SharingService.asmx',
         soap.templates.deleteMember % (role, email), callback, args)
 
 def get_profile(proxy, cid, callback):

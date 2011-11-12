@@ -68,7 +68,7 @@ passport ='''<?xml version="1.0" encoding="UTF-8"?>
             <wst:RequestType>http://schemas.xmlsoap.org/ws/2004/04/security/trust/Issue</wst:RequestType>
             <wsp:AppliesTo>
                 <wsa:EndpointReference>
-                    <wsa:Address>local-bay.contacts.msn.com</wsa:Address>
+                    <wsa:Address>local-sn.contacts.msn.com</wsa:Address>
                 </wsa:EndpointReference>
             </wsp:AppliesTo>
             <wsse:PolicyReference URI="MBI"></wsse:PolicyReference>
